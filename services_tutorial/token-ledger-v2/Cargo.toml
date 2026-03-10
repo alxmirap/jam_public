@@ -1,0 +1,20 @@
+[package]
+name = "jam-token-ledger-v2"
+version = "0.1.0"
+edition = "2024"
+description = "Token Ledger V2: L2-style service with Builder pattern, extrinsics, and D3L exports"
+license = "Apache-2.0"
+
+[dependencies]
+codec = { version = "0.1.1", default-features = false, package = "jam-codec" }
+jam-pvm-common = { version = "0.1.26", default-features = false, features = ["service", "logging"] }
+jam-types = { version = "0.1.26", default-features = false }
+polkavm-derive = "0.31.0"
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+ed25519-consensus = { version = "2.1", default-features = false }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+blake2 = { version = "0.10", default-features = false }
+
+[profile.production]
+inherits = "release"
