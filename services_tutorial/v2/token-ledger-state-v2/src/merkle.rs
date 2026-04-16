@@ -14,6 +14,7 @@ use super::{
 };
 
 use alloc::collections::BTreeMap;
+use alloc::fmt;
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use token_ledger_common::{AccountId, TokenId};
@@ -103,6 +104,18 @@ impl State {
 
     pub fn get_root(&self) -> Hash {
         return hash_pair(self.balances.root(), &self.known_tokens.merkle_value());
+    }
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "State {{ root: {}, known accounts: {:?}, known_tokens: {:?} }}",
+            hex::encode(self.get_root()),
+            self.balances.key_values.len(),
+            self.known_tokens.token_ids
+        )
     }
 }
 

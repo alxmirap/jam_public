@@ -23,7 +23,7 @@ This tutorial extends previous tutorials (a token ledger storing data during acc
 This tutorial will not attempt to:
 - be secure, we keep skipping signature checks in refinement.
 - be optimal, we use a very simple bounded, unoptimal, merkle state and proofs. For real use a proper third party implementation of state and state storage should be used (eg polkadot sdk).
-- implement state distribution: each client should synch upon the last state root finalized in Jam state. A disconnected client will lose ability to synch state if work items and work reports get pruned (the Graypaper defines two retention periods: short-lived _auditable bundles_ are kept in the Audit DA store by assurers only until the relevant block is finalized, and a long-lived data lake, where exported segments and their page-proofs can be retained for 28 days or more). (TODO: @cheme may need to clarify this a bit). [Here we will not implement such client but simply launch all clients from a disk directory over a single state persistence, totally cheating on state distribution  Generally availability for client can be largely application centric. Work reports in blocks can also be largely used (but in practice only block changing jamt storage for the service are of interest).]
+- implement state distribution: each client should synch upon the last state root finalized in Jam state. A disconnected client will lose ability to synch state if work items and work reports get pruned (the Graypaper defines two retention periods: short-lived _auditable bundles_ are kept in the Audit DA store by assurers only until the relevant block is finalized, and a long-lived data lake, where exported segments and their page-proofs can be retained for 28 days or more). Here we do not implement such client, but simply launch all clients from a disk directory where we keep the successive database states stored in files named according to the state's root hash. A single file called `HEAD` keeps track of which is the current state. This enables us to always sync the witness generation with the current valid state, but of course in case we restart the testnet, or deploy a new service the current state will be reset to genesis. At that moment, the image on disk becomes irrelevant and all such files should be deleted, to avoid submitting inconsistent work packages. This persisted state is used both for interaction via the command line and direct connection to an RPC node.
 - define proper role for distribution: every client represents a validator with direct access to the Jam datalake and work items. In a real implementation, distribution strategy must fit the usecase.
 - show how to handle errors. External clients must handle the failure or success of service processing, but our dummy client implementation will assume success and try to update its state directly when producing the workitem. If the refinement panics, accumulation will not proceed.
 - parallelize execution, since our usecase can fail (multiple parallel transaction overspending an account) and handling parallel refinement is rather complex. Even if part of the tutorial (see segments) lay a foundation to try to resolve multiple parallel state transitions, this is too involved for a tutorial. Therefore every state transition must run sequentially, which means every state transition must start from the state of the previous one.  
@@ -37,7 +37,7 @@ Important nuance for this implementation: the Witness is built from state access
 
 The Jam's service storage maintains a cryptographic commitment to the global state, so accumulation is limited to updating this commitment after refinement confirms the purported state transition is the correct outcome of all the submitted operations, and it is built on the currently stored state.
 
-Note that refinement, by itself, can ascertain validity of operations only in relation to the partial state communicated with them. Where we have several clients, it may happen that one of them submits a partial state that is not in sync with what the others have submitted to the service and so it may happen that a state transition is considered valid in refinement but corresponds to a global state that is no longer up to date. For this reason, accumulation ensures that the state only changes if its current value corresponds to the initial state confirmed by the Witness, that is, the batch of operations was applied to the service's current state.
+Note that refinement, by itself, can ascertain validity of operations only in relation to the partial state communicated with them. Where we have several clients, it may happen that one of them submits a partial state that is not in sync with (or is outright malicious) what the others have submitted to the service and so it may happen that a state transition is considered valid in refinement but corresponds to a global state that is no longer up to date. For this reason, accumulation ensures that the state only changes if its current value corresponds to the initial state confirmed by the Witness, that is, the batch of operations was applied to the service's current state.
 
 In summary, clients store and share a common state, then submit state-transition proofs to the service. Refinement validates the transition from the witness data, and accumulation only stores and updates the state commitment.
 
@@ -54,7 +54,7 @@ For each balance key that is read or written, the client records:
 - the accessed key/value pair (when present), so refinement can reconstruct the touched leaves;
 - the sibling hashes along the leaf-to-root path in the balances Merkle tree.
 
-The witness format is therefore access-based (all keys touched by transition logic), not strictly "all keys that ended up changed". In practice this can include values that were only read for validation (for example checking balances before a transfer).
+The witness format is therefore access-based (all keys touched by transition logic), not strictly "all keys that ended up changed". In practice this must include values that were read for validation (for example checking balances before a transfer).
 
 The collected tree hashes are deduplicated by node index before encoding, so overlapping paths do not duplicate the same hash entry. However, this remains a simple tutorial design and does not try to minimize proof size aggressively.
 
@@ -62,7 +62,7 @@ Token IDs are handled separately from balances: the full token-id list is curren
 
 At this point we have described the state model (full external state + partial witness + on-chain commitment). The next sections discuss a different axis: how this same payload is delivered to refinement (directly, via preimage, or via segments).
 
-Full state serializing is done after all state transition (usually done by the command line producing the jam workitme), with no recovery of errors.
+Full state serializing is done after each state transition (usually done by the command line producing the jam workitem), with no recovery of errors.
 
 Full state deserializing is done on each command call.
 
@@ -106,7 +106,7 @@ For ease of use, we let the user specify a series of operations in a friendly wa
 We can't use Json directly as payload, so we encode it first in binary. The encoded payload run contains both the input operations and the state witness necessary for refinement to verify the correctness of the state transition.
 
 1. Create a list of operations without cryptographic material (no signatures nor account IDs): <unsigned_ops.json>
-2. From `token-ledger-builder-v2`, ionvert this list to a Json file with full information in Json with 
+2. From `token-ledger-builder-v2`, convert this list to a Json file with full information in Json with 
 
 ```
 cargo run --bin sign_ops <unsigned_ops.json> <signed_ops.json>
@@ -148,6 +148,150 @@ just create-service <service.jam>
 ```
 cargo run -- --connect-rpc --service 94560b8f <signed_ops.json>
 ```
+
+## Debugging
+
+As with any code, it is possible the service meets unexpected conditions and fails to compute to the end, for example due to insufficient gas or memory for the whole workload. We can simulate the latter by commenting this line `polkavm_derive::min_stack_size!(32 * 1024);` and trying to submit a single operation.
+
+We will likely find an error, where refinement does not finish and then accumulation panics:
+`node4: 2026-04-09 15:57:48 tokio-runtime-worker WARN   #ea10d9a7 [Accumulation]: Work item failed: Panic`
+
+This error is raised while executing the service code inside the PVM, and to obtain detailed logs of that we need to execute the testnet in debug mode. That can be achieved with 
+`just start-testnet-debug`, but keep in mind this generates a much bigger amount of logs. You can redirect the ouptut to file for easier analysis with
+```
+just start-testnet-debug  2>&1 | tee log_file
+```
+
+If an error occurs during PVM execution, you will get a message in your logs similar to this one, with an indication of the location of the error, the likely cause and a possible solution.
+```
+node2: 2026-04-09 16:16:33 tokio-runtime-worker DEBUG polkavm::api    Location: #112765: u64 [sp + 0x28] = a0
+node2: 2026-04-09 16:16:33 tokio-runtime-worker DEBUG polkavm::api  Trapped when trying to access address: 0xfefdddc0-0xfefdddc8
+node2: 2026-04-09 16:16:33 tokio-runtime-worker DEBUG polkavm::api    Current stack range: 0xfefde000-0xfefe0000
+node2: 2026-04-09 16:16:33 tokio-runtime-worker DEBUG polkavm::api    Hint: try increasing your stack size with: 'polkavm_derive::min_stack_size'
+```
+
+In this case, we can just increase the available memory. In this case the error was caused by external conditions: there is not necessarily an error in the logic, but the environment (ie memory) constraints forced the program to stop prematurely. For a different case, where the error is caused by bad logic, we could have different error messages. For example, add this bit of code that tries to divide by zero:
+```
+    info!("=== Dividing by zero to create a panic in service code ===");
+    let a = 10;
+    let b = get("zero_divisor").unwrap_or(0);
+    let c = a / b;
+    info!("Result of division: {}", c);
+```
+
+On execution, his results in a different message, also with a trap location:
+```
+node0: 2026-04-09 16:25:06 tokio-runtime-worker INFO   #1d9993d1 === Dividing by zero to create a panic in service code ===
+[...]
+node0: 2026-04-09 16:25:06 tokio-runtime-worker WARN   #1d9993d1 Panic message: panicked at src/accumulation.rs:34:13:
+node0: attempt to divide by zero
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter  Starting execution at: 37063 [5736]
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter::raw_handlers  Trap at 37063: explicit trap
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::api    Location: #37063: trap
+```
+
+Here, we get a pointer to the actual line that caused the error, which should put you on the path to the cause.
+
+The logs provide a full trace of the execution. For example, just before this message you could have something like
+
+```
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter  Starting execution at: 15071 [4878]
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter  Compiling block:
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4886]: 15085: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4887]: 15085: ra = 0x128
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4888]: 15089: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4889]: 15089: sp = sp + 0xffffffffffffffb0
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4890]: 15092: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4891]: 15092: u64 [sp + 0x48] = ra
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4892]: 15095: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4893]: 15095: u64 [sp + 0x40] = s0
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4894]: 15098: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4895]: 15098: u64 [sp + 0x38] = s1
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4896]: 15101: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4897]: 15101: a2 = 0xc
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4898]: 15104: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4899]: 15104: a1 = 0x1079c
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4900]: 15109: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4901]: 15109: a0 = sp + 0x20
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4902]: 15112: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4903]: 15112: ra = 0x270
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4904]: 15116: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [4905]: 15116: jump 12187
+[...]
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter  Compiling block:
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5724]: 37047: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5725]: 37047: a4 = u64 [sp + 0x108]
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5726]: 37051: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5727]: 37051: a0 = 0x1
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5728]: 37054: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5729]: 37054: a3 = sp + 0x8
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5730]: 37057: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5731]: 37057: a1 = 0
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5732]: 37059: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5733]: 37059: a2 = 0
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5734]: 37061: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5735]: 37061: ecalli 100
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5736]: 37063: charge_gas
+node0: 2026-04-09 16:25:06 tokio-runtime-worker DEBUG polkavm::interpreter    [5737]: 37063: trap
+```
+
+You can also try to compare this trace to the service's disassembled PVM code.
+To do that, first locate the `.polkavm` file (TODO: currently, this seems to be exported to a temporary folder in order to create the .jam file, which is then copied to the current working directory. If there is a way to preserve the `.polkavm` file, I still haven't found it out. For now, I modified the builder logs to also copy the .polkavm together with the .jam file) and disassemble it with
+```
+polkatool disassemble <file.polkavm>
+```
+
+Note: by default, the builder removes some debug symbols from the compiled source, which will not be present in the disassembled file. If you want to have these (indicating the function names), build the service before deploying it on the testnet with the environment PVM_BUILDER_STRIP set to 0.
+
+For example, for the above code, we can find the trap occurred in the following function:
+```
+<__rustc::da6fc54cdd59cb4]::rust_begin_unwind>:
+      : @1831
+ 36929: sp = sp + 0xfffffffffffffea0
+ 36933: u64 [sp + 0x158] = ra
+ 36937: u64 [sp + 0x150] = s0
+ 36941: a1 = 0
+ 36943: a2 = 0
+ 36945: u64 [sp] = a0
+ 36947: a3 = 0x11570
+ 36952: a0 = 0x1
+ 36955: a4 = 0x15
+ 36958: ecalli 100 // 'log'
+ 36960: s0 = 0x1
+ 36963: u64 [sp + 264] = 0
+ 36967: a1 = 0x11585
+ 36972: a0 = sp + 0x8
+ 36975: a2 = 0xf
+ 36978: ra = 1024, jump @1826
+      : @1832 [@dyn 512]
+ 36983: a0 = sp
+ 36985: a1 = 0x3f4
+ 36989: a2 = 0x11598
+ 36994: u64 [sp + 304] = 0
+ 36998: u64 [sp + 0x140] = a0
+ 37002: u64 [sp + 0x148] = a1
+ 37006: a0 = sp + 0x140
+ 37010: u64 [sp + 0x110] = a2
+ 37014: u64 [sp + 0x118] = s0
+ 37018: u64 [sp + 0x120] = a0
+ 37022: u64 [sp + 0x128] = s0
+ 37026: a0 = sp + 0x8
+ 37029: a1 = sp + 0x110
+ 37033: ra = 0x402
+ 37037: a2 = a1
+ 37039: a1 = 0x132a0
+ 37044: jump @2582
+      : @1833 [@dyn 513]
+ 37047: a4 = u64 [sp + 0x108]
+ 37051: a0 = 0x1
+ 37054: a3 = sp + 0x8
+ 37057: a1 = 0
+ 37059: a2 = 0
+ 37061: ecalli 100 // 'log'
+ 37063: trap
+```
+
+Debugging the PVM code is complex and way beyond the scope of this tutorial. If you need to debug at this level, be prepared to invest some time in understanding the PVM and the various outputs.
 
 # Other modes of operation
 

@@ -1,4 +1,5 @@
 /**/target
 *.jam
-services_tutorial/token-ledger-service-v1/jam-token-ledger-client/.DS_Store
-.DS_Store
+*.polkavm
+*.DS_Store
+HEAD

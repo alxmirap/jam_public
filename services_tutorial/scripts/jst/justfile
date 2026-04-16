@@ -22,6 +22,12 @@ start-testnet *args:
     polkajam-testnet {{args}}
 alias st := start-testnet
 
+# Start testnet in debug mode
+[no-cd]
+start-testnet-debug *args:
+    RUST_LOG=polkavm=debug polkajam-testnet {{args}}
+alias dt := start-testnet-debug
+
 # Build a service
 [no-cd]
 build-service SERVICE:

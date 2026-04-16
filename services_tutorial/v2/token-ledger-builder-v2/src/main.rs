@@ -10,8 +10,8 @@ use jam_std_common::{Node, NodeError, NodeExt, hash_raw};
 use jam_tooling::CommonArgs;
 use jam_types::{
     AuthConfig, Authorization, Authorizer, CodeHash, CoreIndex, ExtrinsicSpec, HeaderHash,
-    RefineContext, Slot, ValIndex, WorkItem, WorkPackage, WorkPackageHash, max_accumulate_gas,
-    max_refine_gas, val_count, VALS_PER_CORE,
+    RefineContext, Slot, VALS_PER_CORE, ValIndex, WorkItem, WorkPackage, WorkPackageHash,
+    max_accumulate_gas, max_refine_gas, val_count,
 };
 use jsonrpsee::ws_client::WsClient;
 use std::env;
@@ -32,9 +32,16 @@ fn main() {
     // Assumes we are running against the polkajam-testnet,
     // in the tiny config
     let parameters = jam_types::ProtocolParameters::tiny();
-	parameters.apply().expect("Built-in parameters should always be valid; qed");
+    parameters
+        .apply()
+        .expect("Built-in parameters should always be valid; qed");
 
-    println!("Set tiny config. Val count: {}, Vals per core: {}, Core count: {}", val_count(), VALS_PER_CORE, val_count() / VALS_PER_CORE as CoreIndex   );
+    println!(
+        "Set tiny config. Val count: {}, Vals per core: {}, Core count: {}",
+        val_count(),
+        VALS_PER_CORE,
+        val_count() / VALS_PER_CORE as CoreIndex
+    );
 
     let matches = command!() // requires `cargo` feature
         .arg(
@@ -247,18 +254,11 @@ async fn submit_to_node(
     let service = match node
         .service_data(anchor, service_id)
         .await?
-        .ok_or_else(|| {
-            println!(
-                "Service {service_id} not found at anchor {:?}",
-                anchor
-            )
-        }) {
+        .ok_or_else(|| println!("Service {service_id} not found at anchor {:?}", anchor))
+    {
         Ok(service) => service,
         Err(_) => {
-            println!(
-                "⚠️  Service {service_id} not found at anchor {:?}",
-                anchor
-            );
+            println!("⚠️  Service {service_id} not found at anchor {:?}", anchor);
             std::process::exit(1);
         }
     };
@@ -271,7 +271,10 @@ async fn submit_to_node(
         .await?
         .is_some();
 
-    println!("Is authorizer available: {:?}", auth_code_preimage_available);
+    println!(
+        "Is authorizer available: {:?}",
+        auth_code_preimage_available
+    );
     if !service_code_preimage_available || !auth_code_preimage_available {
         println!(
             "Preflight failed before submit: code preimage missing. service_preimage_available={}, authorizer_preimage_available={}\nservice={:08x}, service_code_hash={}, auth_code_host={:08x}, null_authorizer_hash={}, anchor={:?}\nHint: this commonly happens when targeting externally deployed services whose code preimage is not available to this node.",
@@ -289,7 +292,7 @@ async fn submit_to_node(
     // We create an empty extrinsics list here, for demonstration purposes only.
     let extrinsic_data = &[];
     let _extrinsic_hash = hash_raw(extrinsic_data).into();
-    let _extrinsic_specs = vec![ExtrinsicSpec {
+    let _extrinsic_specs = [ExtrinsicSpec {
         hash: _extrinsic_hash,
         len: extrinsic_data.len() as u32,
     }];
@@ -297,7 +300,6 @@ async fn submit_to_node(
     let export_count = 0;
 
     println!("Created context for submission");
-
 
     let item = WorkItem {
         service: service_id,
@@ -484,7 +486,8 @@ fn compute_transition_witness(
     let mut opt_db = std::fs::OpenOptions::new();
     opt_db.read(true).write(true);
     let mut state = State::from_db_path(db_path.to_path_buf(), overload_head);
-    println!("Initial root: {}", hex::encode(state.get_root()));
+
+    println!("\nInitial root: {}", hex::encode(state.get_root()));
     let _ = token_ledger_state_v2::state_transition(&mut state, operations, false);
     let witness = state.take_witness();
     println!("Post execution root: {}", hex::encode(state.get_root()));

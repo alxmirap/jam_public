@@ -33,11 +33,11 @@ pub fn on_accumulate_items(items: Vec<AccumulateItem>) {
     };
 
     for item in items {
-        info!("Accumulate processing work item record");
+        info!("[Accumulation] Processing work item record");
         match item {
             AccumulateItem::WorkItem(r) => on_work_item_record(r, &mut items_result),
             AccumulateItem::Transfer(_) => {
-                info!("Transfer not used in this example");
+                info!("[Accumulation] Transfer not used in this example");
                 continue;
             }
         }
@@ -46,15 +46,23 @@ pub fn on_accumulate_items(items: Vec<AccumulateItem>) {
     // single step resolve
     match items_result.previous_state_root {
         Ok(Some(new_root)) => {
-            // TODO manage single step error
-            set("client_root", new_root).unwrap();
-            info!("External client state transition success");
+            let current_root: Hash = get("client_root").unwrap_or_default();
+            if current_root != new_root {
+                // TODO manage single step error
+                set("client_root", new_root).unwrap();
+                info!(
+                    "[Accumulation] External client state transition success. New root: {:?}",
+                    hex::encode(new_root)
+                );
+            } else {
+                info!("[Accumulation] External client state unchanged. Skipping root update.");
+            }
         }
         Ok(None) => {
-            info!("External client state unchanged");
+            info!("[Accumulation] External client state unchanged");
         }
         Err(()) => {
-            error!("Mismatch root, skipping all transition");
+            error!("[Accumulation] Mismatch root, skipping all transition");
         }
     }
 
@@ -63,19 +71,19 @@ pub fn on_accumulate_items(items: Vec<AccumulateItem>) {
 
 fn on_work_item_record(record: WorkItemRecord, acc: &mut PendingAccumulateResult) {
     info!(
-        "Accumulate processing work item record: package {:?}",
+        "[Accumulation] Processing work item record: package {:?}",
         record.package
     );
     let output = match &record.result {
         Ok(output) => output,
         Err(e) => {
-            warn!("Work item failed: {:?}", e);
+            warn!("[Accumulation]: Work item failed: {:?}", e);
             return;
         }
     };
 
     let Ok(op) = Operation::decode(&mut &output[..]) else {
-        warn!("Failed to decode validated operation");
+        warn!("[Accumulation]: Failed to decode validated operation");
         return;
     };
 
@@ -92,7 +100,7 @@ fn on_work_item_record_single_step(
     if acc.is_err() {
         return;
     }
-    info!("Processing external state transition operations");
+    info!("[Accumulation] Processing external state transition operations");
     let current_root = if let Ok(Some(r)) = acc {
         *r
     } else {
@@ -101,9 +109,9 @@ fn on_work_item_record_single_step(
     if op.previous_root == current_root {
         *acc = Ok(Some(op.new_root));
     } else {
-        error!("Mismatch root, skipping all transition");
-        error!("expected {:?}", current_root);
-        error!("have {:?}", op.previous_root);
+        error!("[Accumulation] Mismatch root, skipping all transition");
+        error!("[Accumulation] expected {:?}", current_root);
+        error!("[Accumulation] have {:?}", op.previous_root);
         *acc = Err(());
         return;
     }
@@ -117,10 +125,13 @@ fn on_work_item_record_single_step(
                 if let Err(e) =
                     jam_pvm_common::accumulate::solicit(&solicit.hash, solicit.len as usize)
                 {
-                    error!("Could not solicit preimage: {:?}, {:?}", solicit.hash, e);
+                    error!(
+                        "[Accumulation] Could not solicit preimage: {:?}, {:?}",
+                        solicit.hash, e
+                    );
                 } else {
                     info!(
-                        "Preimage {:?} of len {} has been sollicited",
+                        "[Accumulation] Preimage {:?} of len {} has been sollicited",
                         solicit.hash, solicit.len
                     );
                 }
@@ -134,7 +145,10 @@ fn on_work_item_record_single_step(
                 // We store hash of segment content with a reference count.
                 let mut queued_segments: BTreeMap<Hash, u64> =
                     get("queued_segments").unwrap_or(BTreeMap::new());
-                info!("acc loaded queued of size {}", queued_segments.len());
+                info!(
+                    "[Accumulation]: acc loaded queued of size {}",
+                    queued_segments.len()
+                );
                 for p in &op.processed_segments {
                     let mut rem_seg = false;
                     if let Some(rc) = queued_segments.get_mut(p) {
@@ -144,7 +158,7 @@ fn on_work_item_record_single_step(
                         }
                     } else {
                         error!(
-                            "Non buffered segment {} was refined, dropping all",
+                            "[Accumulation]: Non buffered segment {} was refined, dropping all",
                             hex::encode(p)
                         );
                         *acc = Err(());
@@ -155,7 +169,7 @@ fn on_work_item_record_single_step(
                     }
                 }
                 for p in op.exported_segments {
-                    info!("Acc exported {}", hex::encode(&p));
+                    info!("[Accumulation]: Acc exported {}", hex::encode(&p));
                     if let Some(rc) = queued_segments.get_mut(&p) {
                         *rc += 1;
                     } else {
@@ -164,7 +178,10 @@ fn on_work_item_record_single_step(
                 }
                 // TODO properly handle error (especially for tutorial)
                 set("queued_segments", &queued_segments).unwrap();
-                info!("Acc updated queued of size {}", queued_segments.len());
+                info!(
+                    "[Accumulation]: Acc updated queued of size {}",
+                    queued_segments.len()
+                );
             }
         }
         Mode::Direct => (),

@@ -38,14 +38,27 @@ impl State {
     }
 
     pub fn from_db_path(db_location: std::path::PathBuf, head: Option<Hash>) -> Self {
+        println!("[-----------------------------------]");
+        println!(
+            "Restoring state from db path: [{}]. Overload head: {:?}\n",
+            db_location.display(),
+            head
+        );
+
         let head_hash = if let Some(h) = head {
             h
         } else {
             Self::read_head(db_location.clone())
         };
-        if head_hash != EMPTY_HASH {
+        println!("Determined Head hash: {}\n", hex::encode(head_hash));
+
+        let state = if head_hash != EMPTY_HASH {
             let mut state_path = db_location.clone();
             state_path.push(hex::encode(head_hash));
+            println!(
+                "Head not at genesis. Reading state from db location: {}",
+                state_path.display()
+            );
             let mut db_file = std::fs::File::open(state_path).unwrap();
             let mut reader = codec::IoReader(&mut db_file);
             State {
@@ -54,10 +67,14 @@ impl State {
                 persist: Some(db_location),
             }
         } else {
+            println!("Head at genesis, starting with empty state");
             let mut state = State::default();
             state.set_new_persist_file(db_location);
             state
-        }
+        };
+        println!("\nRestored state: {}", state);
+        println!("[-----------------------------------]");
+        state
     }
 
     pub fn set_new_persist_file(&mut self, db_location: std::path::PathBuf) {
@@ -134,6 +151,18 @@ impl State {
             file.write_all(hex::encode(hash).as_bytes()).unwrap();
             file.flush().unwrap();
         }
+    }
+}
+
+impl std::fmt::Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "State {{ root: {}, known accounts: {:?}, known_tokens: {:?} }}",
+            hex::encode(self.get_root()),
+            self.balances.state.key_values.len(),
+            self.known_tokens.merkle.token_ids
+        )
     }
 }
 
@@ -340,7 +369,7 @@ impl KnownTokens {
 
     fn serialize<W: Write>(&mut self, w: &mut W) {
         let encoded = self.merkle.token_ids.encode();
-        dbg!("serializing {} token bytes", encoded.len());
+        dbg!("serializing {} known token bytes", encoded.len());
         w.write_all(encoded.as_slice()).unwrap();
     }
 

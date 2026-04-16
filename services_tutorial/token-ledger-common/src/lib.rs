@@ -8,7 +8,7 @@ pub mod json;
 // using consensus to avoid importing jam-std-common (quite heay import TODO feature gate it a
 // bit?).
 use blake2b_simd::Params;
-pub use ed25519_consensus::{VerificationKey, VerificationKeyBytes};
+pub use ed25519_consensus::{SigningKey, VerificationKey, VerificationKeyBytes};
 use jam_types::Hash;
 
 use codec::{Decode, Encode};
@@ -54,9 +54,15 @@ pub fn verify_signature(
     signature: &Signature,
     key: VerificationKey,
 ) -> Result<(), &'static str> {
-    let message = op.encode();
-    key.verify(&signature.0, &message)
-        .map_err(|_| "Signature verification failed")
+    let message = op.signing_message().encode();
+    key.verify(&signature.0, &message).map_err(|_| {
+        jam_pvm_common::info!(
+            "Signature verification failed for message: {:?} and key {:?}",
+            hex::encode(&message),
+            hex::encode(key.as_bytes())
+        );
+        "Signature verification failed for message"
+    })
 }
 
 impl Operation {
@@ -133,12 +139,49 @@ pub fn canonical_transfer(
     ((token_id, (counterparts.0, counterparts.1)), amount)
 }
 
+/// A keypair for signing
+#[derive(Clone, Debug)]
+pub struct Keypair {
+    pub signing_key: SigningKey,
+    pub public_key: VerificationKey,
+}
+
+impl Keypair {
+    /// Create a keypair from a 32-byte seed
+    pub fn from_seed(seed: &[u8; 32]) -> Self {
+        let signing_key = SigningKey::from(*seed);
+        let verification_key = signing_key.verification_key();
+        Self {
+            signing_key,
+            public_key: verification_key,
+        }
+    }
+
+    /// Sign a message
+    pub fn sign(&self, message: &[u8]) -> [u8; 64] {
+        self.signing_key.sign(message).to_bytes()
+    }
+}
+
+/// Generate a deterministic keypair for testing (index-based)
+pub fn generate_keypair(seed: u64) -> Keypair {
+    let mut seed_bytes = [0u8; 32];
+    seed_bytes[0..8].copy_from_slice(&seed.to_le_bytes());
+    Keypair::from_seed(&seed_bytes)
+}
+
 /// For demonstration only: a hard-coded admin account that must authorise every operation submitted
 /// to the service. In a real-world scenario, developers must decide on a proper authorization
 /// layer, deciding who can authorize operations and how the service would manage their identities
 /// and keys.
 pub fn admin() -> VerificationKeyBytes {
-    [0_u8; 32].into()
+    admin_keypair().public_key.to_bytes().into()
+}
+
+pub fn admin_keypair() -> Keypair {
+    let mut seed_bytes = [0u8; 32];
+    seed_bytes[0..5].copy_from_slice(b"admin");
+    Keypair::from_seed(&seed_bytes)
 }
 
 /// A unique identifier for a token type

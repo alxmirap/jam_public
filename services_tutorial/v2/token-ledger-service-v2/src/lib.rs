@@ -18,6 +18,12 @@ pub use refinement::Payload as RefinePayload;
 mod accumulation;
 mod refinement;
 
+#[cfg(all(
+    any(target_arch = "riscv32", target_arch = "riscv64"),
+    target_feature = "e"
+))]
+polkavm_derive::min_stack_size!(32 * 1024);
+
 /// The Token Ledger Service
 pub struct TokenLedgerExternalClient;
 declare_service!(TokenLedgerExternalClient);
@@ -31,7 +37,7 @@ impl Service for TokenLedgerExternalClient {
         package_hash: WorkPackageHash,
     ) -> WorkOutput {
         info!(
-            "TokenLedger refine on service {service_id:x}h for package/item {package_hash} / {item_index}"
+            "=== TokenLedger refine on service {service_id:x}h for package/item {package_hash} / {item_index} ==="
         );
         // full hash display
         info!("Package hash {}", hex::encode(package_hash.as_slice()));
@@ -40,7 +46,7 @@ impl Service for TokenLedgerExternalClient {
 
         let output: WorkOutput = encoded.into();
         info!(
-            "Refinement done over {} operations, payload of size {}",
+            "=== Refinement done over {} operations, payload of size {} === ",
             operations_len,
             output.0.len()
         );
@@ -48,9 +54,12 @@ impl Service for TokenLedgerExternalClient {
     }
 
     fn accumulate(slot: Slot, service_id: ServiceId, item_count: usize) -> Option<Hash> {
-        info!("TokenLedger accumulate on service {service_id:x}h @{slot} with {item_count} items");
+        info!(
+            "=== TokenLedger accumulate on service {service_id:x}h @{slot} with {item_count} items ==="
+        );
 
         crate::accumulation::on_accumulate_items(accumulate::accumulate_items());
+        info!("=== TokenLedger accumulate finished ===");
         None
     }
 }

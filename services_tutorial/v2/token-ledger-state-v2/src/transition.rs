@@ -79,7 +79,7 @@ pub fn state_transition<S: StateOps>(
                             .expect("Hard-coded Admin key");
 
                     if verify_signature(&operation, &signature, admin_key).is_err() {
-                        warn!("Invalid signature for operation");
+                        warn!("Invalid signature for Mint operation");
 
                         // For the sake of the tutorial, and ease of use, we don't reject if the signature
                         // is invalid. We do compute the verification here to show that expensive
@@ -106,7 +106,7 @@ pub fn state_transition<S: StateOps>(
                         continue;
                     };
                     if verify_signature(&operation, &signature, signer_key).is_err() {
-                        warn!("Invalid signature for operation");
+                        warn!("Invalid signature for Transfer operation");
 
                         // For the sake of the tutorial, and ease of use, we don't reject if the signature
                         // is invalid. We do compute the verification here to show that expensive
